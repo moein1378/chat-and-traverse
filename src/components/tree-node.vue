@@ -1,99 +1,102 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref } from 'vue';
+
+interface NodeType {
+    id: number;
+    name: string;
+    children: any[];
+    isChecked: boolean;
+    isIndeterminate: boolean;
+    isExpanded: boolean;
+    parentId?: number;
+}
 
 interface Props {
-    node: {
-        id: number;
-        name: string;
-        children: any[];
-    }
+    node: NodeType;
+    parentNode?: any;
 }
 
 const props = defineProps<Props>();
-const emit = defineEmits(['update:checked']);
+const nestedNodesCheckStates = ref<boolean[]>([])
 
-const isChecked = ref(false);
-const isIndeterminate = ref(false);
-const isExpanded = ref(true);
-const checkbox = ref<HTMLInputElement | null>(null);
+const captureTraverseNestedNode = (nestedChildren: any[], checkState: boolean) => {
+    nestedChildren.forEach((node: NodeType) => {
+        node.isChecked = checkState
+        if (node.children && node.children.length) {
+            captureTraverseNestedNode(node.children, checkState)
+        }
+    })
+}
 
-const childStates = ref<Map<number, boolean>>(new Map());
+const bubblingTraverseNestedNode = (node: NodeType) => {
+    if (node.children && node.children.length) {
+        node.children.forEach((subNode: NodeType) => {
+            nestedNodesCheckStates.value.push(subNode.isChecked)
+            bubblingTraverseNestedNode(subNode)
+        })
+    }
+}
 
-const toggleExpand = () => {
-    isExpanded.value = !isExpanded.value;
-};
+const controlNonParentIdNode = (node: NodeType) => {
+    if (node.children && node.children.length) {
+        captureTraverseNestedNode(node.children, node.isChecked)
+    }
+}
 
-const toggleCheck = () => {
-    isChecked.value = !isChecked.value;
-    isIndeterminate.value = false;
-    updateChildrenStates(isChecked.value);
-    emitUpdateChecked();
-};
+const controlParentIdNode = (node: NodeType) => {
+    if (node.parentId) {
+        if (props.parentNode?.children && props.parentNode?.children.length) {
+            props.parentNode.isIndeterminate = false
+            nestedNodesCheckStates.value = []
+            bubblingTraverseNestedNode(props.parentNode);
+            controlNodeState(props.parentNode)
+        }
+    }
+}
 
-const updateChildrenStates = (checked: boolean) => {
-    props.node.children.forEach(child => {
-        childStates.value.set(child.id, checked);
-    });
-};
-
-const handleChildUpdate = (childId: number, checked: boolean) => {
-    childStates.value.set(childId, checked);
-    updateState();
-};
-
-const updateState = () => {
-    const states = Array.from(childStates.value.values());
-    const allChecked = states.every(state => state);
-    const allUnchecked = states.every(state => !state);
+const controlNodeState = (node:NodeType)=>{
+    const allChecked = nestedNodesCheckStates.value.every((isChecked: boolean) => isChecked)
+    const allUnchecked = nestedNodesCheckStates.value.every((isChecked: boolean) => !isChecked)
+    const allDeterminate = nestedNodesCheckStates.value.some((isChecked: boolean) => !isChecked)
 
     if (allChecked) {
-        isChecked.value = true;
-        isIndeterminate.value = false;
-    } else if (allUnchecked) {
-        isChecked.value = false;
-        isIndeterminate.value = false;
-    } else {
-        isChecked.value = false;
-        isIndeterminate.value = true;
+        node.isChecked = allChecked
+        node.isIndeterminate = false
     }
-
-    emitUpdateChecked();
-};
-
-const emitUpdateChecked = () => {
-    emit('update:checked', props.node.id, isChecked.value);
-};
-
-onMounted(() => {
-    if (props.node.children) {
-        props.node.children.forEach(child => {
-            childStates.value.set(child.id, false);
-        });
+    if (allDeterminate) {
+        node.isChecked = false
+        node.isIndeterminate = allDeterminate
     }
-});
-
-watch(() => childStates.value, updateState, { deep: true });
-
-watch([isIndeterminate, checkbox], ([indeterminate, el]) => {
-    if (el) {
-        el.indeterminate = indeterminate;
+    if (allUnchecked) {
+        node.isChecked = false
+        node.isIndeterminate = !allUnchecked
     }
-}, { immediate: true });
+}
+
+
+const toggleExpand = (node: NodeType) => {
+    node.isExpanded = !node.isExpanded
+}
+const toggleCheck = (node: NodeType) => {
+    node.isChecked = !node.isChecked
+    controlNonParentIdNode(node)
+    controlParentIdNode(node)
+}
+
 </script>
 <template>
     <div class="my-2">
         <div class="flex items-center">
-            <input type="checkbox" :checked="isChecked" :indeterminate="isIndeterminate" @change="toggleCheck"
-                class="mr-2 form-checkbox h-5 w-5 text-blue-600" ref="checkbox">
-            <span @click="toggleExpand" class="cursor-pointer mr-2 text-gray-500"
+            <input type="checkbox" :checked="props.node.isChecked" :indeterminate="props.node.isIndeterminate"
+                @change="toggleCheck(props.node)" class="cursor-pointer mr-2 form-checkbox h-5 w-5 text-blue-600" ref="checkbox">
+            <span @click="toggleExpand(props.node)" class="cursor-pointer mr-2 text-gray-500"
                 v-if="node.children && node.children.length">
-                {{ isExpanded ? '▼' : '►' }}
+                {{ props.node.isExpanded ? '▼' : '►' }}
             </span>
             <span class="text-gray-800">{{ node.name }}</span>
         </div>
-        <div v-if="isExpanded" class="ml-6">
-            <TreeNode v-for="child in node.children" :key="child.id" :node="child"
-                @update:checked="handleChildUpdate" />
+        <div v-if="props.node.isExpanded" class="ml-6">
+            <TreeNode v-for="child in node.children" :key="child.id" :node="child" :parentNode="node" />
         </div>
     </div>
 </template>
